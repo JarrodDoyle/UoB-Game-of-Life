@@ -35,8 +35,8 @@ type distributorToIo struct {
 	command chan<- ioCommand
 	idle    <-chan bool
 
-	filename  chan<- string
-	inputVal  <-chan uint8
+	filename chan<- string
+	inputVal <-chan uint8
 }
 
 // ioToDistributor defines all chans that the io goroutine will have to communicate with the distributor goroutine.
@@ -45,8 +45,8 @@ type ioToDistributor struct {
 	command <-chan ioCommand
 	idle    chan<- bool
 
-	filename  <-chan string
-	inputVal  chan<- uint8
+	filename <-chan string
+	inputVal chan<- uint8
 }
 
 // distributorChans stores all the chans that the distributor goroutine will use.
@@ -120,6 +120,7 @@ func main() {
 	params.turns = 10000000000
 
 	startControlServer(params)
+	go getKeyboardCommand(nil)
 	gameOfLife(params, nil)
 	StopControlServer()
 }

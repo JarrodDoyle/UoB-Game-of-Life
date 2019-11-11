@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"os"
 
 	"github.com/nsf/termbox-go"
 )
@@ -12,10 +13,15 @@ func getKeyboardCommand(key chan<- rune) {
 	for {
 		event := termbox.PollEvent()
 		if event.Type == termbox.EventKey {
-			if event.Key != 0 {
-				key <- rune(event.Key)
-			} else if event.Ch != 0 {
-				key <- event.Ch
+			if event.Key == termbox.KeyCtrlC {
+				StopControlServer()
+				os.Exit(0)
+			} else if key != nil {
+				if event.Key != 0 {
+					key <- rune(event.Key)
+				} else if event.Ch != 0 {
+					key <- event.Ch
+				}
 			}
 		}
 	}
