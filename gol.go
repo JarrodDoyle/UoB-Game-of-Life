@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"strconv"
 	"strings"
 )
@@ -24,7 +23,6 @@ func distributor(p golParams, d distributorChans, alive chan []cell) {
 		for x := 0; x < p.imageWidth; x++ {
 			val := <-d.io.inputVal
 			if val != 0 {
-				fmt.Println("Alive cell at", x, y)
 				world[y][x] = val
 			}
 		}
@@ -32,12 +30,33 @@ func distributor(p golParams, d distributorChans, alive chan []cell) {
 
 	// Calculate the new state of Game of Life after the given number of turns.
 	for turns := 0; turns < p.turns; turns++ {
+		var newWorld [][]byte
 		for y := 0; y < p.imageHeight; y++ {
+			var row []byte
 			for x := 0; x < p.imageWidth; x++ {
-				// Placeholder for the actual Game of Life logic: flips alive cells to dead and dead cells to alive.
-				world[y][x] = world[y][x] ^ 0xFF
+				aliveNeighbours := 0
+				aliveNeighbours += int(world[(y-1+p.imageHeight)%p.imageHeight][(x-1+p.imageWidth)%p.imageWidth])
+				aliveNeighbours += int(world[(y-1+p.imageHeight)%p.imageHeight][x])
+				aliveNeighbours += int(world[(y-1+p.imageHeight)%p.imageHeight][(x+1)%p.imageWidth])
+				aliveNeighbours += int(world[y][(x-1+p.imageWidth)%p.imageWidth])
+				aliveNeighbours += int(world[y][(x+1)%p.imageWidth])
+				aliveNeighbours += int(world[(y+1)%p.imageHeight][(x-1+p.imageWidth)%p.imageWidth])
+				aliveNeighbours += int(world[(y+1)%p.imageHeight][x])
+				aliveNeighbours += int(world[(y+1)%p.imageHeight][(x+1)%p.imageWidth])
+				aliveNeighbours /= 255
+
+				row = append(row, world[y][x])
+				if world[y][x] != 0 {
+					if !(aliveNeighbours == 2 || aliveNeighbours == 3) {
+						row[x] = row[x] ^ 0xFF
+					}
+				} else if aliveNeighbours == 3 {
+					row[x] = row[x] ^ 0xFF
+				}
 			}
+			newWorld = append(newWorld, row)
 		}
+		world = newWorld
 	}
 
 	// Create an empty slice to store coordinates of cells that are still alive after p.turns are done.
