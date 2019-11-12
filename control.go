@@ -2,6 +2,8 @@ package main
 
 import (
 	"fmt"
+	"os"
+
 	"github.com/nsf/termbox-go"
 )
 
@@ -11,10 +13,15 @@ func getKeyboardCommand(key chan<- rune) {
 	for {
 		event := termbox.PollEvent()
 		if event.Type == termbox.EventKey {
-			if event.Key != 0 {
-				key <- rune(event.Key)
-			} else if event.Ch != 0 {
-				key <- event.Ch
+			if event.Key == termbox.KeyCtrlC {
+				StopControlServer()
+				os.Exit(0)
+			} else if key != nil {
+				if event.Key != 0 {
+					key <- rune(event.Key)
+				} else if event.Ch != 0 {
+					key <- event.Ch
+				}
 			}
 		}
 	}
@@ -30,7 +37,7 @@ func startControlServer(p golParams) {
 	fmt.Println("Height:", p.imageHeight)
 }
 
-// stopControlServer closes termbox.
+// StopControlServer closes termbox.
 // If the program is terminated without closing termbox the terminal window may misbehave.
 func StopControlServer() {
 	termbox.Close()

@@ -20,6 +20,7 @@ func writePgmImage(p golParams, i ioChans) {
 	_ = os.Mkdir("out", os.ModePerm)
 
 	filename := <-i.distributor.filename
+
 	file, ioError := os.Create("out/" + filename + ".pgm")
 	check(ioError)
 	defer file.Close()
@@ -33,16 +34,26 @@ func writePgmImage(p golParams, i ioChans) {
 	_, _ = file.WriteString(strconv.Itoa(255))
 	_, _ = file.WriteString("\n")
 
-	world := make([][]byte, p.imageHeight)
-	for i := range world {
-		world[i] = make([]byte, p.imageWidth)
-	}
+	// world := make([][]byte, p.imageHeight)
+	// for i := range world {
+	// 	world[i] = make([]byte, p.imageWidth)
+	// }
 
 	// TODO: write a for-loop to receive the world from the distributor when outputting.
+	// for y := 0; y < p.imageHeight; y++ {
+	// 	for x := 0; x < p.imageWidth; x++ {
+	// 		val := <-i.distributor.outputVal
+	// 		if val != 0 {
+	// 			world[y][x] = val
+	// 		}
+	// 	}
+	// }
 
 	for y := 0; y < p.imageHeight; y++ {
 		for x := 0; x < p.imageWidth; x++ {
-			_, ioError = file.Write([]byte{world[y][x]})
+
+			// _, ioError = file.Write([]byte{world[y[x]})
+			_, ioError = file.Write([]byte{<-i.distributor.outputVal})
 			check(ioError)
 		}
 	}
