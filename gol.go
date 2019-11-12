@@ -5,6 +5,24 @@ import (
 	"strings"
 )
 
+func countAliveNeighbours(world [][]byte, x, y, w, h int) int {
+	aliveNeighbours := 0
+	aliveNeighbours += int(world[(y-1+h)%h][(x-1+w)%w])
+	aliveNeighbours += int(world[(y-1+h)%h][x])
+	aliveNeighbours += int(world[(y-1+h)%h][(x+1)%w])
+	aliveNeighbours += int(world[y][(x-1+w)%w])
+	aliveNeighbours += int(world[y][(x+1)%w])
+	aliveNeighbours += int(world[(y+1)%h][(x-1+w)%w])
+	aliveNeighbours += int(world[(y+1)%h][x])
+	aliveNeighbours += int(world[(y+1)%h][(x+1)%w])
+	aliveNeighbours /= 255
+	return aliveNeighbours
+}
+
+// func worker() {
+
+// }
+
 // distributor divides the work between workers and interacts with other goroutines.
 func distributor(p golParams, d distributorChans, alive chan []cell) {
 
@@ -34,16 +52,7 @@ func distributor(p golParams, d distributorChans, alive chan []cell) {
 		for y := 0; y < p.imageHeight; y++ {
 			var row []byte
 			for x := 0; x < p.imageWidth; x++ {
-				aliveNeighbours := 0
-				aliveNeighbours += int(world[(y-1+p.imageHeight)%p.imageHeight][(x-1+p.imageWidth)%p.imageWidth])
-				aliveNeighbours += int(world[(y-1+p.imageHeight)%p.imageHeight][x])
-				aliveNeighbours += int(world[(y-1+p.imageHeight)%p.imageHeight][(x+1)%p.imageWidth])
-				aliveNeighbours += int(world[y][(x-1+p.imageWidth)%p.imageWidth])
-				aliveNeighbours += int(world[y][(x+1)%p.imageWidth])
-				aliveNeighbours += int(world[(y+1)%p.imageHeight][(x-1+p.imageWidth)%p.imageWidth])
-				aliveNeighbours += int(world[(y+1)%p.imageHeight][x])
-				aliveNeighbours += int(world[(y+1)%p.imageHeight][(x+1)%p.imageWidth])
-				aliveNeighbours /= 255
+				aliveNeighbours := countAliveNeighbours(world, x, y, p.imageWidth, p.imageHeight)
 
 				row = append(row, world[y][x])
 				if world[y][x] != 0 {
