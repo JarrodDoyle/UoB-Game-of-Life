@@ -17,3 +17,5 @@
 gameoflife
 
 main_test.go
+
+out/
