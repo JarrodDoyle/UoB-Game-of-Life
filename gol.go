@@ -82,8 +82,6 @@ func worker(p golParams, val chan byte) {
 				val <- workerSlice[y][x]
 			}
 		}
-
-		fmt.Println(workerSlice)
 	}
 }
 
@@ -147,7 +145,7 @@ func distributor(p golParams, d distributorChans, alive chan []cell) {
 		}
 
 		for i := 0; i < p.threads; i++ {
-			for j := 0; j < workerHeight; j++ {
+			for j := i * workerHeight; j < (i+1)*workerHeight; j++ {
 				newWorld[j] = receiveRow(p.imageWidth, workerChannels[i])
 			}
 		}
@@ -181,4 +179,6 @@ func distributor(p golParams, d distributorChans, alive chan []cell) {
 
 	// Return the coordinates of cells that are still alive.
 	alive <- finalAlive
+
+	fmt.Println(finalAlive)
 }
