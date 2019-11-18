@@ -137,19 +137,12 @@ func distributor(p golParams, d distributorChans, alive chan []cell) {
 			}
 		}
 
-		// Create new temporary 2d slice
-		newWorld := make([][]byte, p.imageHeight)
-		for i := range newWorld {
-			newWorld[i] = make([]byte, p.imageWidth)
-		}
-
-		// Recieve rows from workers
-		for i := 0; i < p.threads; i++ {
-			for j := i * workerHeight; j < (i+1)*workerHeight; j++ {
-				newWorld[j] = receiveRow(p.imageWidth, workerChannels[i].output)
+		// Receive rows from workers
+		for i := 0; i < workerHeight; i++ {
+			for j := 0; j < p.threads; j++ {
+				world[(j*workerHeight)+i] = receiveRow(p.imageWidth, workerChannels[j].output)
 			}
 		}
-		world = newWorld
 	}
 
 	// Request the io goroutine to write in the image with the given filename.
