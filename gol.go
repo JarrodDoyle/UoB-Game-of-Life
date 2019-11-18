@@ -5,23 +5,84 @@ import (
 	"strings"
 )
 
-func countAliveNeighbours(world [][]byte, x, y, w, h int) int {
+func countAliveNeighbours(slice [][]byte, x, y, w, h int) int {
 	aliveNeighbours := 0
-	aliveNeighbours += int(world[(y-1+h)%h][(x-1+w)%w])
-	aliveNeighbours += int(world[(y-1+h)%h][x])
-	aliveNeighbours += int(world[(y-1+h)%h][(x+1)%w])
-	aliveNeighbours += int(world[y][(x-1+w)%w])
-	aliveNeighbours += int(world[y][(x+1)%w])
-	aliveNeighbours += int(world[(y+1)%h][(x-1+w)%w])
-	aliveNeighbours += int(world[(y+1)%h][x])
-	aliveNeighbours += int(world[(y+1)%h][(x+1)%w])
+	aliveNeighbours += int(slice[(y-1+h)%h][(x-1+w)%w])
+	aliveNeighbours += int(slice[(y-1+h)%h][x])
+	aliveNeighbours += int(slice[(y-1+h)%h][(x+1)%w])
+	aliveNeighbours += int(slice[y][(x-1+w)%w])
+	aliveNeighbours += int(slice[y][(x+1)%w])
+	aliveNeighbours += int(slice[(y+1)%h][(x-1+w)%w])
+	aliveNeighbours += int(slice[(y+1)%h][x])
+	aliveNeighbours += int(slice[(y+1)%h][(x+1)%w])
 	aliveNeighbours /= 255
 	return aliveNeighbours
 }
 
-// func worker() {
+func receiveRow(width int, val chan byte) []byte {
+	row := make([]byte, width)
+	for x := 0; x < width; x++ {
+		row[x] = <-val
+	}
+	return row
+}
 
-// }
+func worker(p golParams, val chan byte) {
+	sliceHeight := (p.imageHeight / p.threads) + 2
+	workerSlice := make([][]byte, sliceHeight)
+	for i := range workerSlice {
+		workerSlice[i] = make([]byte, p.imageWidth)
+	}
+
+	for i := 0; i < p.turns; i++ {
+		// Receive top row
+		workerSlice[0] = receiveRow(p.imageWidth, val)
+		// Receive center section if first turn
+		if i == 0 {
+			for j := 1; j < sliceHeight-1; j++ {
+				workerSlice[j] = receiveRow(p.imageWidth, val)
+			}
+		}
+		// Receive bottom row
+		workerSlice[sliceHeight-1] = receiveRow(p.imageWidth, val)
+
+		// Create temporary slice
+		newSlice := make([][]byte, sliceHeight)
+		for i := range newSlice {
+			newSlice[i] = make([]byte, p.imageWidth)
+		}
+
+		// Make sure top and bottom slice are the same
+		newSlice[0] = workerSlice[0]
+		newSlice[sliceHeight-1] = workerSlice[sliceHeight-1]
+
+		// Process center and update workerSlice
+		for y := 1; y < sliceHeight-1; y++ {
+			row := make([]byte, p.imageWidth)
+			for x := 0; x < p.imageWidth; x++ {
+				aliveNeighbours := countAliveNeighbours(workerSlice, x, y, p.imageWidth, sliceHeight)
+
+				row[x] = workerSlice[y][x]
+				if workerSlice[y][x] != 0 {
+					if !(aliveNeighbours == 2 || aliveNeighbours == 3) {
+						row[x] = row[x] ^ 0xFF
+					}
+				} else if aliveNeighbours == 3 {
+					row[x] = row[x] ^ 0xFF
+				}
+			}
+			newSlice[y] = row
+		}
+		workerSlice = newSlice
+
+		// Send center to distributor
+		for y := 1; y < sliceHeight-1; y++ {
+			for x := 0; x < p.imageWidth; x++ {
+				val <- workerSlice[y][x]
+			}
+		}
+	}
+}
 
 // distributor divides the work between workers and interacts with other goroutines.
 func distributor(p golParams, d distributorChans, alive chan []cell) {
@@ -46,24 +107,49 @@ func distributor(p golParams, d distributorChans, alive chan []cell) {
 		}
 	}
 
-	// Calculate the new state of Game of Life after the given number of turns.
-	for turns := 0; turns < p.turns; turns++ {
-		var newWorld [][]byte
-		for y := 0; y < p.imageHeight; y++ {
-			var row []byte
-			for x := 0; x < p.imageWidth; x++ {
-				aliveNeighbours := countAliveNeighbours(world, x, y, p.imageWidth, p.imageHeight)
+	// Create worker channels and initialise worker threads
+	workerHeight := p.imageHeight / p.threads
+	workerChannels := make([]chan byte, p.threads)
+	for i := 0; i < p.threads; i++ {
+		workerChannels[i] = make(chan byte)
+		go worker(p, workerChannels[i])
+	}
 
-				row = append(row, world[y][x])
-				if world[y][x] != 0 {
-					if !(aliveNeighbours == 2 || aliveNeighbours == 3) {
-						row[x] = row[x] ^ 0xFF
+	// Calculate the new state of Game of Life after the given number of turns.
+	for turn := 0; turn < p.turns; turn++ {
+		// send rows to workers
+		for i := 0; i < p.threads; i++ {
+			// Send top row
+			y := ((i * workerHeight) - 1 + p.imageHeight) % p.imageHeight
+			for x := 0; x < p.imageWidth; x++ {
+				workerChannels[i] <- world[y][x]
+			}
+			// Send center rows if turn 0
+			if turn == 0 {
+				for y := i * workerHeight; y < (i+1)*workerHeight; y++ {
+					for x := 0; x < p.imageWidth; x++ {
+						workerChannels[i] <- world[y][x]
 					}
-				} else if aliveNeighbours == 3 {
-					row[x] = row[x] ^ 0xFF
 				}
 			}
-			newWorld = append(newWorld, row)
+			// Send bottom row
+			y = ((i + 1) * workerHeight) % p.imageHeight
+			for x := 0; x < p.imageWidth; x++ {
+				workerChannels[i] <- world[y][x]
+			}
+		}
+
+		// Create new temporary 2d slice
+		newWorld := make([][]byte, p.imageHeight)
+		for i := range newWorld {
+			newWorld[i] = make([]byte, p.imageWidth)
+		}
+
+		// Recieve rows from workers
+		for i := 0; i < p.threads; i++ {
+			for j := i * workerHeight; j < (i+1)*workerHeight; j++ {
+				newWorld[j] = receiveRow(p.imageWidth, workerChannels[i])
+			}
 		}
 		world = newWorld
 	}
