@@ -5,18 +5,9 @@ import (
 	"strings"
 )
 
-func countAliveNeighbours(slice [][]byte, x, y, w, h int) int {
-	aliveNeighbours := 0
-	aliveNeighbours += int(slice[(y-1+h)%h][(x-1+w)%w])
-	aliveNeighbours += int(slice[(y-1+h)%h][x])
-	aliveNeighbours += int(slice[(y-1+h)%h][(x+1)%w])
-	aliveNeighbours += int(slice[y][(x-1+w)%w])
-	aliveNeighbours += int(slice[y][(x+1)%w])
-	aliveNeighbours += int(slice[(y+1)%h][(x-1+w)%w])
-	aliveNeighbours += int(slice[(y+1)%h][x])
-	aliveNeighbours += int(slice[(y+1)%h][(x+1)%w])
-	aliveNeighbours /= 255
-	return aliveNeighbours
+type wChans struct {
+	input  chan uint8
+	output chan uint8
 }
 
 func receiveRow(width int, val chan byte) []byte {
@@ -27,7 +18,7 @@ func receiveRow(width int, val chan byte) []byte {
 	return row
 }
 
-func worker(p golParams, val chan byte) {
+func worker(p golParams, chans wChans) {
 	sliceHeight := (p.imageHeight / p.threads) + 2
 	workerSlice := make([][]byte, sliceHeight)
 	for i := range workerSlice {
@@ -36,15 +27,15 @@ func worker(p golParams, val chan byte) {
 
 	for i := 0; i < p.turns; i++ {
 		// Receive top row
-		workerSlice[0] = receiveRow(p.imageWidth, val)
+		workerSlice[0] = receiveRow(p.imageWidth, chans.input)
 		// Receive center section if first turn
 		if i == 0 {
 			for j := 1; j < sliceHeight-1; j++ {
-				workerSlice[j] = receiveRow(p.imageWidth, val)
+				workerSlice[j] = receiveRow(p.imageWidth, chans.input)
 			}
 		}
 		// Receive bottom row
-		workerSlice[sliceHeight-1] = receiveRow(p.imageWidth, val)
+		workerSlice[sliceHeight-1] = receiveRow(p.imageWidth, chans.input)
 
 		// Create temporary slice
 		newSlice := make([][]byte, sliceHeight)
@@ -52,35 +43,28 @@ func worker(p golParams, val chan byte) {
 			newSlice[i] = make([]byte, p.imageWidth)
 		}
 
-		// Make sure top and bottom slice are the same
-		newSlice[0] = workerSlice[0]
-		newSlice[sliceHeight-1] = workerSlice[sliceHeight-1]
-
 		// Process center and update workerSlice
 		for y := 1; y < sliceHeight-1; y++ {
 			row := make([]byte, p.imageWidth)
 			for x := 0; x < p.imageWidth; x++ {
-				aliveNeighbours := countAliveNeighbours(workerSlice, x, y, p.imageWidth, sliceHeight)
+				s := workerSlice
+				w := p.imageWidth
+				aliveNeighbours := (int(s[y-1][(x-1+w)%w]) + int(s[y-1][x]) + int(s[y-1][(x+1)%w]) + int(s[y][(x-1+w)%w]) +
+					int(s[y][(x+1)%w]) + int(s[y+1][(x-1+w)%w]) + int(s[y+1][x]) + int(s[y+1][(x+1)%w])) / 255
 
 				row[x] = workerSlice[y][x]
 				if workerSlice[y][x] != 0 {
 					if !(aliveNeighbours == 2 || aliveNeighbours == 3) {
-						row[x] = row[x] ^ 0xFF
+						row[x] = 0x00
 					}
 				} else if aliveNeighbours == 3 {
-					row[x] = row[x] ^ 0xFF
+					row[x] = 0xFF
 				}
+				chans.output <- row[x]
 			}
 			newSlice[y] = row
 		}
 		workerSlice = newSlice
-
-		// Send center to distributor
-		for y := 1; y < sliceHeight-1; y++ {
-			for x := 0; x < p.imageWidth; x++ {
-				val <- workerSlice[y][x]
-			}
-		}
 	}
 }
 
@@ -109,9 +93,12 @@ func distributor(p golParams, d distributorChans, alive chan []cell) {
 
 	// Create worker channels and initialise worker threads
 	workerHeight := p.imageHeight / p.threads
-	workerChannels := make([]chan byte, p.threads)
+	workerChannels := make([]wChans, p.threads)
 	for i := 0; i < p.threads; i++ {
-		workerChannels[i] = make(chan byte)
+		var wChans wChans
+		wChans.input = make(chan byte, p.imageWidth*(workerHeight+2))
+		wChans.output = make(chan byte, p.imageWidth*workerHeight)
+		workerChannels[i] = wChans
 		go worker(p, workerChannels[i])
 	}
 
@@ -122,36 +109,29 @@ func distributor(p golParams, d distributorChans, alive chan []cell) {
 			// Send top row
 			y := ((i * workerHeight) - 1 + p.imageHeight) % p.imageHeight
 			for x := 0; x < p.imageWidth; x++ {
-				workerChannels[i] <- world[y][x]
+				workerChannels[i].input <- world[y][x]
 			}
 			// Send center rows if turn 0
 			if turn == 0 {
 				for y := i * workerHeight; y < (i+1)*workerHeight; y++ {
 					for x := 0; x < p.imageWidth; x++ {
-						workerChannels[i] <- world[y][x]
+						workerChannels[i].input <- world[y][x]
 					}
 				}
 			}
 			// Send bottom row
 			y = ((i + 1) * workerHeight) % p.imageHeight
 			for x := 0; x < p.imageWidth; x++ {
-				workerChannels[i] <- world[y][x]
+				workerChannels[i].input <- world[y][x]
 			}
 		}
 
-		// Create new temporary 2d slice
-		newWorld := make([][]byte, p.imageHeight)
-		for i := range newWorld {
-			newWorld[i] = make([]byte, p.imageWidth)
-		}
-
-		// Recieve rows from workers
-		for i := 0; i < p.threads; i++ {
-			for j := i * workerHeight; j < (i+1)*workerHeight; j++ {
-				newWorld[j] = receiveRow(p.imageWidth, workerChannels[i])
+		// Receive rows from workers
+		for i := 0; i < workerHeight; i++ {
+			for j := 0; j < p.threads; j++ {
+				world[(j*workerHeight)+i] = receiveRow(p.imageWidth, workerChannels[j].output)
 			}
 		}
-		world = newWorld
 	}
 
 	// Request the io goroutine to write in the image with the given filename.
