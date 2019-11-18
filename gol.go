@@ -52,10 +52,6 @@ func worker(p golParams, val chan byte) {
 			newSlice[i] = make([]byte, p.imageWidth)
 		}
 
-		// Make sure top and bottom slice are the same
-		newSlice[0] = workerSlice[0]
-		newSlice[sliceHeight-1] = workerSlice[sliceHeight-1]
-
 		// Process center and update workerSlice
 		for y := 1; y < sliceHeight-1; y++ {
 			row := make([]byte, p.imageWidth)
@@ -65,10 +61,10 @@ func worker(p golParams, val chan byte) {
 				row[x] = workerSlice[y][x]
 				if workerSlice[y][x] != 0 {
 					if !(aliveNeighbours == 2 || aliveNeighbours == 3) {
-						row[x] = row[x] ^ 0xFF
+						row[x] = 0x00
 					}
 				} else if aliveNeighbours == 3 {
-					row[x] = row[x] ^ 0xFF
+					row[x] = 0xFF
 				}
 			}
 			newSlice[y] = row
