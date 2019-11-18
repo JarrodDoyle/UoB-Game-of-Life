@@ -10,20 +10,6 @@ type wChans struct {
 	output chan uint8
 }
 
-func countAliveNeighbours(slice [][]byte, x, y, w, h int) int {
-	aliveNeighbours := 0
-	aliveNeighbours += int(slice[(y-1+h)%h][(x-1+w)%w])
-	aliveNeighbours += int(slice[(y-1+h)%h][x])
-	aliveNeighbours += int(slice[(y-1+h)%h][(x+1)%w])
-	aliveNeighbours += int(slice[y][(x-1+w)%w])
-	aliveNeighbours += int(slice[y][(x+1)%w])
-	aliveNeighbours += int(slice[(y+1)%h][(x-1+w)%w])
-	aliveNeighbours += int(slice[(y+1)%h][x])
-	aliveNeighbours += int(slice[(y+1)%h][(x+1)%w])
-	aliveNeighbours /= 255
-	return aliveNeighbours
-}
-
 func receiveRow(width int, val chan byte) []byte {
 	row := make([]byte, width)
 	for x := 0; x < width; x++ {
@@ -61,7 +47,10 @@ func worker(p golParams, chans wChans) {
 		for y := 1; y < sliceHeight-1; y++ {
 			row := make([]byte, p.imageWidth)
 			for x := 0; x < p.imageWidth; x++ {
-				aliveNeighbours := countAliveNeighbours(workerSlice, x, y, p.imageWidth, sliceHeight)
+				s := workerSlice
+				w := p.imageWidth
+				aliveNeighbours := (int(s[y-1][(x-1+w)%w]) + int(s[y-1][x]) + int(s[y-1][(x+1)%w]) + int(s[y][(x-1+w)%w]) +
+					int(s[y][(x+1)%w]) + int(s[y+1][(x-1+w)%w]) + int(s[y+1][x]) + int(s[y+1][(x+1)%w])) / 255
 
 				row[x] = workerSlice[y][x]
 				if workerSlice[y][x] != 0 {
