@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"strconv"
 	"strings"
 )
@@ -118,8 +117,9 @@ func distributor(p golParams, d distributorChans, alive chan []cell) {
 
 	// Calculate the new state of Game of Life after the given number of turns.
 	for turn := 0; turn < p.turns; turn++ {
+		// send rows to workers
 		for i := 0; i < p.threads; i++ {
-			// Send top rows
+			// Send top row
 			y := ((i * workerHeight) - 1 + p.imageHeight) % p.imageHeight
 			for x := 0; x < p.imageWidth; x++ {
 				workerChannels[i] <- world[y][x]
@@ -132,18 +132,20 @@ func distributor(p golParams, d distributorChans, alive chan []cell) {
 					}
 				}
 			}
-			// Send bottom rows
-			y = (((i + 1) * workerHeight) + 1) % p.imageHeight
+			// Send bottom row
+			y = ((i + 1) * workerHeight) % p.imageHeight
 			for x := 0; x < p.imageWidth; x++ {
 				workerChannels[i] <- world[y][x]
 			}
 		}
 
+		// Create new temporary 2d slice
 		newWorld := make([][]byte, p.imageHeight)
 		for i := range newWorld {
 			newWorld[i] = make([]byte, p.imageWidth)
 		}
 
+		// Recieve rows from workers
 		for i := 0; i < p.threads; i++ {
 			for j := i * workerHeight; j < (i+1)*workerHeight; j++ {
 				newWorld[j] = receiveRow(p.imageWidth, workerChannels[i])
@@ -179,6 +181,4 @@ func distributor(p golParams, d distributorChans, alive chan []cell) {
 
 	// Return the coordinates of cells that are still alive.
 	alive <- finalAlive
-
-	fmt.Println(finalAlive)
 }
