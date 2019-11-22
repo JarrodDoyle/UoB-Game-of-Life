@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 )
@@ -16,6 +17,18 @@ func receiveRow(width int, val chan byte) []byte {
 		row[x] = <-val
 	}
 	return row
+}
+
+func sendOutput(p golParams, d distributorChans, world [][]byte) {
+	// Request the io goroutine to write in the image with the given filename.
+	d.io.command <- ioOutput
+	d.io.filename <- strings.Join([]string{strconv.Itoa(p.imageWidth), strconv.Itoa(p.imageHeight), strconv.Itoa(p.turns)}, "x")
+
+	for y := 0; y < p.imageHeight; y++ {
+		for x := 0; x < p.imageWidth; x++ {
+			d.io.outputVal <- world[y][x]
+		}
+	}
 }
 
 func worker(p golParams, chans wChans) {
@@ -104,6 +117,7 @@ func distributor(p golParams, d distributorChans, alive chan []cell) {
 
 	// Calculate the new state of Game of Life after the given number of turns.
 	for turn := 0; turn < p.turns; turn++ {
+		fmt.Println(turn)
 		// send rows to workers
 		for i := 0; i < p.threads; i++ {
 			// Send top row
@@ -132,17 +146,18 @@ func distributor(p golParams, d distributorChans, alive chan []cell) {
 				world[(j*workerHeight)+i] = receiveRow(p.imageWidth, workerChannels[j].output)
 			}
 		}
-	}
 
-	// Request the io goroutine to write in the image with the given filename.
-	d.io.command <- ioOutput
-	d.io.filename <- strings.Join([]string{strconv.Itoa(p.imageWidth), strconv.Itoa(p.imageHeight), strconv.Itoa(p.turns)}, "x")
-
-	for y := 0; y < p.imageHeight; y++ {
-		for x := 0; x < p.imageWidth; x++ {
-			d.io.outputVal <- world[y][x]
+		// Deal with input
+		select {
+		case key := <-d.key:
+			if key == 's' {
+				sendOutput(p, d, world)
+			}
+		default:
 		}
 	}
+
+	sendOutput(p, d, world)
 
 	// Create an empty slice to store coordinates of cells that are still alive after p.turns are done.
 	var finalAlive []cell
