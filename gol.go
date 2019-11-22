@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"strconv"
 	"strings"
 )
@@ -117,7 +116,6 @@ func distributor(p golParams, d distributorChans, alive chan []cell) {
 
 	// Calculate the new state of Game of Life after the given number of turns.
 	for turn := 0; turn < p.turns; turn++ {
-		fmt.Println(turn)
 		// send rows to workers
 		for i := 0; i < p.threads; i++ {
 			// Send top row
