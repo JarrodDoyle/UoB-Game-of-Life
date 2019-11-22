@@ -30,6 +30,21 @@ func sendOutput(p golParams, d distributorChans, world [][]byte) {
 	}
 }
 
+func calculateFinalAlive(p golParams, world [][]byte) []cell {
+	// Create an empty slice to store coordinates of cells that are still alive after p.turns are done.
+	var finalAlive []cell
+	// Go through the world and append the cells that are still alive.
+	for y := 0; y < p.imageHeight; y++ {
+		for x := 0; x < p.imageWidth; x++ {
+			if world[y][x] != 0 {
+				finalAlive = append(finalAlive, cell{x: x, y: y})
+			}
+		}
+	}
+
+	return finalAlive
+}
+
 func worker(p golParams, chans wChans) {
 	sliceHeight := (p.imageHeight / p.threads) + 2
 	workerSlice := make([][]byte, sliceHeight)
@@ -155,23 +170,13 @@ func distributor(p golParams, d distributorChans, alive chan []cell) {
 		}
 	}
 
+	// Send output to PGM io
 	sendOutput(p, d, world)
-
-	// Create an empty slice to store coordinates of cells that are still alive after p.turns are done.
-	var finalAlive []cell
-	// Go through the world and append the cells that are still alive.
-	for y := 0; y < p.imageHeight; y++ {
-		for x := 0; x < p.imageWidth; x++ {
-			if world[y][x] != 0 {
-				finalAlive = append(finalAlive, cell{x: x, y: y})
-			}
-		}
-	}
 
 	// Make sure that the Io has finished any output before exiting.
 	d.io.command <- ioCheckIdle
 	<-d.io.idle
 
 	// Return the coordinates of cells that are still alive.
-	alive <- finalAlive
+	alive <- calculateFinalAlive(p, world)
 }
