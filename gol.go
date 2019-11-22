@@ -19,10 +19,10 @@ func receiveRow(width int, val chan byte) []byte {
 	return row
 }
 
-func sendOutput(p golParams, d distributorChans, world [][]byte) {
+func sendOutput(p golParams, d distributorChans, world [][]byte, turn int) {
 	// Request the io goroutine to write in the image with the given filename.
 	d.io.command <- ioOutput
-	d.io.filename <- strings.Join([]string{strconv.Itoa(p.imageWidth), strconv.Itoa(p.imageHeight), strconv.Itoa(p.turns)}, "x")
+	d.io.filename <- strings.Join([]string{strconv.Itoa(p.imageWidth), strconv.Itoa(p.imageHeight), strconv.Itoa(turn)}, "x")
 
 	for y := 0; y < p.imageHeight; y++ {
 		for x := 0; x < p.imageWidth; x++ {
@@ -166,7 +166,7 @@ func distributor(p golParams, d distributorChans, alive chan []cell) {
 			select {
 			case key := <-d.key:
 				if key == 's' {
-					sendOutput(p, d, world)
+					sendOutput(p, d, world, turn)
 				} else if key == 'p' {
 					if running {
 						fmt.Println("Pausing... turn =", turn)
@@ -175,7 +175,7 @@ func distributor(p golParams, d distributorChans, alive chan []cell) {
 					}
 					running = !running
 				} else if key == 'q' {
-					sendOutput(p, d, world)
+					sendOutput(p, d, world, turn)
 					d.io.command <- ioCheckIdle
 					<-d.io.idle
 					alive <- calculateFinalAlive(p, world)
@@ -192,7 +192,7 @@ func distributor(p golParams, d distributorChans, alive chan []cell) {
 	}
 
 	// Send output to PGM io
-	sendOutput(p, d, world)
+	sendOutput(p, d, world, p.turns)
 
 	// Make sure that the Io has finished any output before exiting.
 	d.io.command <- ioCheckIdle
