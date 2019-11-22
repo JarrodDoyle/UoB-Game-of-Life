@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 )
@@ -16,6 +17,33 @@ func receiveRow(width int, val chan byte) []byte {
 		row[x] = <-val
 	}
 	return row
+}
+
+func sendOutput(p golParams, d distributorChans, world [][]byte, turn int) {
+	// Request the io goroutine to write in the image with the given filename.
+	d.io.command <- ioOutput
+	d.io.filename <- strings.Join([]string{strconv.Itoa(p.imageWidth), strconv.Itoa(p.imageHeight), strconv.Itoa(turn)}, "x")
+
+	for y := 0; y < p.imageHeight; y++ {
+		for x := 0; x < p.imageWidth; x++ {
+			d.io.outputVal <- world[y][x]
+		}
+	}
+}
+
+func calculateFinalAlive(p golParams, world [][]byte) []cell {
+	// Create an empty slice to store coordinates of cells that are still alive after p.turns are done.
+	var finalAlive []cell
+	// Go through the world and append the cells that are still alive.
+	for y := 0; y < p.imageHeight; y++ {
+		for x := 0; x < p.imageWidth; x++ {
+			if world[y][x] != 0 {
+				finalAlive = append(finalAlive, cell{x: x, y: y})
+			}
+		}
+	}
+
+	return finalAlive
 }
 
 func worker(p golParams, chans wChans) {
@@ -132,33 +160,44 @@ func distributor(p golParams, d distributorChans, alive chan []cell) {
 				world[(j*workerHeight)+i] = receiveRow(p.imageWidth, workerChannels[j].output)
 			}
 		}
-	}
 
-	// Request the io goroutine to write in the image with the given filename.
-	d.io.command <- ioOutput
-	d.io.filename <- strings.Join([]string{strconv.Itoa(p.imageWidth), strconv.Itoa(p.imageHeight), strconv.Itoa(p.turns)}, "x")
-
-	for y := 0; y < p.imageHeight; y++ {
-		for x := 0; x < p.imageWidth; x++ {
-			d.io.outputVal <- world[y][x]
-		}
-	}
-
-	// Create an empty slice to store coordinates of cells that are still alive after p.turns are done.
-	var finalAlive []cell
-	// Go through the world and append the cells that are still alive.
-	for y := 0; y < p.imageHeight; y++ {
-		for x := 0; x < p.imageWidth; x++ {
-			if world[y][x] != 0 {
-				finalAlive = append(finalAlive, cell{x: x, y: y})
+		running := true
+		for {
+			select {
+			case key := <-d.key:
+				if key == 's' {
+					sendOutput(p, d, world, turn)
+				} else if key == 'p' {
+					if running {
+						fmt.Println("Pausing... turn =", turn)
+					} else {
+						fmt.Println("Continuing")
+					}
+					running = !running
+				} else if key == 'q' {
+					sendOutput(p, d, world, turn)
+					d.io.command <- ioCheckIdle
+					<-d.io.idle
+					alive <- calculateFinalAlive(p, world)
+					// By sending to alive channel, gameOfLife will return to main and end program.
+				}
+			default:
+			}
+			if running {
+				break
 			}
 		}
+		// Deal with input
+
 	}
+
+	// Send output to PGM io
+	sendOutput(p, d, world, p.turns)
 
 	// Make sure that the Io has finished any output before exiting.
 	d.io.command <- ioCheckIdle
 	<-d.io.idle
 
 	// Return the coordinates of cells that are still alive.
-	alive <- finalAlive
+	alive <- calculateFinalAlive(p, world)
 }
