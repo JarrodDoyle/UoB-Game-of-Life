@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 )
@@ -160,20 +161,34 @@ func distributor(p golParams, d distributorChans, alive chan []cell) {
 			}
 		}
 
-		// Deal with input
-		select {
-		case key := <-d.key:
-			if key == 's' {
-				sendOutput(p, d, world)
-			} else if key == 'q' {
-				sendOutput(p, d, world)
-				d.io.command <- ioCheckIdle
-				<-d.io.idle
-				alive <- calculateFinalAlive(p, world)
-				// By sending to alive channel, gameOfLife will return to main and end program.
+		running := true
+		for {
+			select {
+			case key := <-d.key:
+				if key == 's' {
+					sendOutput(p, d, world)
+				} else if key == 'p' {
+					if running {
+						fmt.Println("Pausing... turn =", turn)
+					} else {
+						fmt.Println("Continuing")
+					}
+					running = !running
+				} else if key == 'q' {
+					sendOutput(p, d, world)
+					d.io.command <- ioCheckIdle
+					<-d.io.idle
+					alive <- calculateFinalAlive(p, world)
+					// By sending to alive channel, gameOfLife will return to main and end program.
+				}
+			default:
 			}
-		default:
+			if running {
+				break
+			}
 		}
+		// Deal with input
+
 	}
 
 	// Send output to PGM io
