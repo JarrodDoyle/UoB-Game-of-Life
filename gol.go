@@ -161,6 +161,9 @@ func distributor(p golParams, d distributorChans, alive chan []cell) {
 			}
 		}
 
+		alive <- calculateFinalAlive(p, world)
+
+		// Deal with input
 		running := true
 		for {
 			select {
@@ -178,8 +181,7 @@ func distributor(p golParams, d distributorChans, alive chan []cell) {
 					sendOutput(p, d, world, turn)
 					d.io.command <- ioCheckIdle
 					<-d.io.idle
-					alive <- calculateFinalAlive(p, world)
-					// By sending to alive channel, gameOfLife will return to main and end program.
+					d.exit <- true
 				}
 			default:
 			}
@@ -187,8 +189,6 @@ func distributor(p golParams, d distributorChans, alive chan []cell) {
 				break
 			}
 		}
-		// Deal with input
-
 	}
 
 	// Send output to PGM io
@@ -200,4 +200,7 @@ func distributor(p golParams, d distributorChans, alive chan []cell) {
 
 	// Return the coordinates of cells that are still alive.
 	alive <- calculateFinalAlive(p, world)
+
+	// Signal to gameOfLife that we're done
+	d.exit <- true
 }
