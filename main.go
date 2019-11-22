@@ -1,6 +1,10 @@
 package main
 
-import "flag"
+import (
+	"flag"
+	"fmt"
+	"time"
+)
 
 // golParams provides the details of how to run the Game of Life and which image to load.
 type golParams struct {
@@ -53,8 +57,9 @@ type ioToDistributor struct {
 
 // distributorChans stores all the chans that the distributor goroutine will use.
 type distributorChans struct {
-	io  distributorToIo
-	key <-chan rune
+	io   distributorToIo
+	key  <-chan rune
+	exit chan<- bool
 }
 
 // ioChans stores all the chans that the io goroutine will use.
@@ -92,13 +97,32 @@ func gameOfLife(p golParams, keyChan <-chan rune) []cell {
 
 	dChans.key = keyChan
 
+	exitChan := make(chan bool)
+	dChans.exit = exitChan
+
 	aliveCells := make(chan []cell)
 
 	go distributor(p, dChans, aliveCells)
 	go pgmIo(p, ioChans)
 
-	alive := <-aliveCells
-	return alive
+	// Prints the number of alive cells every 2 seconds unless the game is paused
+	// Pause logic is to only check the ticker after receiving an update on the alive cells
+	// If the game is paused no update is provided, therefore ticker is not checked until unpause
+	ticker := time.NewTicker(2 * time.Second)
+	var alive []cell
+	for {
+		select {
+		case alive = <-aliveCells:
+			select {
+			case _ = <-ticker.C:
+				fmt.Println("Alive cells:", len(alive))
+			default: // If tick not complete do nothing
+			}
+		case <-exitChan:
+			ticker.Stop()
+			return alive
+		}
+	}
 }
 
 // main is the function called when starting Game of Life with 'make gol'
