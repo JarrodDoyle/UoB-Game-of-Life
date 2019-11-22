@@ -165,6 +165,12 @@ func distributor(p golParams, d distributorChans, alive chan []cell) {
 		case key := <-d.key:
 			if key == 's' {
 				sendOutput(p, d, world)
+			} else if key == 'q' {
+				sendOutput(p, d, world)
+				d.io.command <- ioCheckIdle
+				<-d.io.idle
+				alive <- calculateFinalAlive(p, world)
+				// By sending to alive channel, gameOfLife will return to main and end program.
 			}
 		default:
 		}
