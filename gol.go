@@ -128,19 +128,18 @@ func distributor(p golParams, d distributorChans, alive chan []cell) {
 	// Create worker channels and initialise worker threads
 	workerChannels := make([]wChans, p.threads)
 	workerHeights := make([]int, p.threads)
+	i := 0
+	for j := 0; j < p.imageHeight; j++ {
+		workerHeights[i]++
+		i++
+		i %= p.threads
+	}
 	for i := 0; i < p.threads; i++ {
 		var wChans wChans
-		var workerHeight int
-		if i == p.threads-1 {
-			workerHeight = p.imageHeight - (p.threads-1)*(p.imageHeight/p.threads)
-		} else {
-			workerHeight = p.imageHeight / p.threads
-		}
-		workerHeights[i] = workerHeight
-		wChans.input = make(chan byte, p.imageWidth*(workerHeight+2))
-		wChans.output = make(chan byte, p.imageWidth*workerHeight)
+		wChans.input = make(chan byte, p.imageWidth*(workerHeights[i]+2))
+		wChans.output = make(chan byte, p.imageWidth*workerHeights[i])
 		workerChannels[i] = wChans
-		go worker(p, workerChannels[i], workerHeight+2)
+		go worker(p, workerChannels[i], workerHeights[i]+2)
 	}
 
 	// Calculate the new state of Game of Life after the given number of turns.
