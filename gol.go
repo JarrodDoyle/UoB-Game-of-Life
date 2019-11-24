@@ -6,9 +6,16 @@ import (
 	"strings"
 )
 
+type rowChans struct {
+	input  chan uint8
+	output chan uint8
+}
+
 type wChans struct {
 	input  chan uint8
 	output chan uint8
+	top    rowChans
+	bottom rowChans
 }
 
 func sumIntSlice(x []int) int {
@@ -19,7 +26,7 @@ func sumIntSlice(x []int) int {
 	return total
 }
 
-func receiveRow(width int, val chan byte) []byte {
+func receiveRow(width int, val <-chan byte) []byte {
 	row := make([]byte, width)
 	for x := 0; x < width; x++ {
 		row[x] = <-val
@@ -61,17 +68,16 @@ func worker(p golParams, chans wChans, sliceHeight int) {
 	}
 
 	for i := 0; i < p.turns; i++ {
-		// Receive top row
-		workerSlice[0] = receiveRow(p.imageWidth, chans.input)
+		// Receive top and bottom row
+		workerSlice[0] = receiveRow(p.imageWidth, chans.top.input)
+		workerSlice[sliceHeight-1] = receiveRow(p.imageWidth, chans.bottom.input)
+
 		// Receive center section if first turn
 		if i == 0 {
 			for j := 1; j < sliceHeight-1; j++ {
 				workerSlice[j] = receiveRow(p.imageWidth, chans.input)
 			}
 		}
-		// Receive bottom row
-		workerSlice[sliceHeight-1] = receiveRow(p.imageWidth, chans.input)
-
 		// Create temporary slice
 		newSlice := make([][]byte, sliceHeight)
 		for i := range newSlice {
@@ -100,6 +106,12 @@ func worker(p golParams, chans wChans, sliceHeight int) {
 			newSlice[y] = row
 		}
 		workerSlice = newSlice
+
+		// Send rows
+		for x := 0; x < p.imageWidth; x++ {
+			chans.top.output <- workerSlice[1][x]
+			chans.bottom.output <- workerSlice[sliceHeight-2][x]
+		}
 	}
 }
 
@@ -125,8 +137,7 @@ func distributor(p golParams, d distributorChans, alive chan []cell) {
 		}
 	}
 
-	// Create worker channels and initialise worker threads
-	workerChannels := make([]wChans, p.threads)
+	// Calculate worker heights
 	workerHeights := make([]int, p.threads)
 	i := 0
 	for j := 0; j < p.imageHeight; j++ {
@@ -134,35 +145,44 @@ func distributor(p golParams, d distributorChans, alive chan []cell) {
 		i++
 		i %= p.threads
 	}
+
+	// Create worker channels and start worker goroutines
+	workerChannels := make([]wChans, p.threads)
 	for i := 0; i < p.threads; i++ {
-		var wChans wChans
-		wChans.input = make(chan byte, p.imageWidth*(workerHeights[i]+2))
-		wChans.output = make(chan byte, p.imageWidth*workerHeights[i])
-		workerChannels[i] = wChans
+		workerChannels[i].input = make(chan byte, p.imageWidth*(workerHeights[i]+2))
+		workerChannels[i].output = make(chan byte, p.imageWidth*workerHeights[i])
+
+		selfBottom := make(chan uint8, p.imageWidth)
+		nextTop := make(chan uint8, p.imageWidth)
+		workerChannels[i].bottom.input = nextTop
+		workerChannels[i].bottom.output = selfBottom
+		workerChannels[(i+1)%p.threads].top.input = selfBottom
+		workerChannels[(i+1)%p.threads].top.output = nextTop
+	}
+
+	for i := 0; i < p.threads; i++ {
 		go worker(p, workerChannels[i], workerHeights[i]+2)
 	}
 
 	// Calculate the new state of Game of Life after the given number of turns.
 	for turn := 0; turn < p.turns; turn++ {
 		// send rows to workers
-		for i := 0; i < p.threads; i++ {
-			// Send top row
-			y := (sumIntSlice(workerHeights[:i]) - 1 + p.imageHeight) % p.imageHeight
-			for x := 0; x < p.imageWidth; x++ {
-				workerChannels[i].input <- world[y][x]
-			}
-			// Send center rows if turn 0
-			if turn == 0 {
+		if turn == 0 {
+			for i := 0; i < p.threads; i++ {
+
+				// Send top and bottom row
+				y1 := (sumIntSlice(workerHeights[:i]) - 1 + p.imageHeight) % p.imageHeight
+				y2 := sumIntSlice(workerHeights[:i+1]) % p.imageHeight
+				for x := 0; x < p.imageWidth; x++ {
+					workerChannels[i].top.input <- world[y1][x]
+					workerChannels[i].bottom.input <- world[y2][x]
+				}
+				// Send center rows
 				for y := sumIntSlice(workerHeights[:i]); y < sumIntSlice(workerHeights[:i+1]); y++ {
 					for x := 0; x < p.imageWidth; x++ {
 						workerChannels[i].input <- world[y][x]
 					}
 				}
-			}
-			// Send bottom row
-			y = sumIntSlice(workerHeights[:i+1]) % p.imageHeight
-			for x := 0; x < p.imageWidth; x++ {
-				workerChannels[i].input <- world[y][x]
 			}
 		}
 
