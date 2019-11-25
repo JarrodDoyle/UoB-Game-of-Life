@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 )
 
 type rowChans struct {
@@ -124,6 +125,8 @@ func worker(p golParams, chans wChans, sliceHeight int) {
 
 // distributor divides the work between workers and interacts with other goroutines.
 func distributor(p golParams, d distributorChans, alive chan []cell) {
+	ticker := time.NewTicker(2 * time.Second)
+
 	// Create the 2D slice to store the world.
 	world := make([][]byte, p.imageHeight)
 	for i := range world {
@@ -222,7 +225,13 @@ func distributor(p golParams, d distributorChans, alive chan []cell) {
 			}
 		}
 
-		requestBoardFromWorkers = requestBoardFromWorkers || turn == p.turns-1
+		select {
+		case <-ticker.C:
+			requestBoardFromWorkers = true
+		default: // If tick not complete do nothing
+			requestBoardFromWorkers = requestBoardFromWorkers || turn == p.turns-1
+		}
+
 		// Tell workers whether they should send current board to distributor
 		for i := 0; i < p.threads; i++ {
 			workerChannels[i].outputRequest <- requestBoardFromWorkers
@@ -237,9 +246,10 @@ func distributor(p golParams, d distributorChans, alive chan []cell) {
 				}
 				baseY += workerHeights[i]
 			}
+			// fmt.Println("Alive cells:", len(calculateFinalAlive(p, world)))
 		}
-		alive <- calculateFinalAlive(p, world)
 	}
+	ticker.Stop()
 
 	// Send output to PGM io
 	sendOutput(p, d, world, p.turns)
@@ -248,9 +258,10 @@ func distributor(p golParams, d distributorChans, alive chan []cell) {
 	d.io.command <- ioCheckIdle
 	<-d.io.idle
 
+	// Signal to gameOfLife that we're done
+	d.exit <- true
+
 	// Return the coordinates of cells that are still alive.
 	alive <- calculateFinalAlive(p, world)
 
-	// Signal to gameOfLife that we're done
-	d.exit <- true
 }
