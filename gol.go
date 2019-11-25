@@ -4,11 +4,20 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 )
 
-type wChans struct {
+type rowChans struct {
 	input  chan uint8
 	output chan uint8
+}
+
+type wChans struct {
+	input         chan uint8
+	output        chan uint8
+	top           rowChans
+	bottom        rowChans
+	outputRequest chan bool
 }
 
 func sumIntSlice(x []int) int {
@@ -19,7 +28,7 @@ func sumIntSlice(x []int) int {
 	return total
 }
 
-func receiveRow(width int, val chan byte) []byte {
+func receiveRow(width int, val <-chan byte) []byte {
 	row := make([]byte, width)
 	for x := 0; x < width; x++ {
 		row[x] = <-val
@@ -61,16 +70,19 @@ func worker(p golParams, chans wChans, sliceHeight int) {
 	}
 
 	for i := 0; i < p.turns; i++ {
-		// Receive top row
-		workerSlice[0] = receiveRow(p.imageWidth, chans.input)
+		// Receive top and bottom row
+		workerSlice[0] = receiveRow(p.imageWidth, chans.top.input)
+		workerSlice[sliceHeight-1] = receiveRow(p.imageWidth, chans.bottom.input)
+
 		// Receive center section if first turn
 		if i == 0 {
 			for j := 1; j < sliceHeight-1; j++ {
 				workerSlice[j] = receiveRow(p.imageWidth, chans.input)
 			}
 		}
-		// Receive bottom row
-		workerSlice[sliceHeight-1] = receiveRow(p.imageWidth, chans.input)
+
+		// sendToDistributor := <-chans.outputRequest
+		sendToDistributor := <-chans.outputRequest
 
 		// Create temporary slice
 		newSlice := make([][]byte, sliceHeight)
@@ -95,16 +107,26 @@ func worker(p golParams, chans wChans, sliceHeight int) {
 				} else if aliveNeighbours == 3 {
 					row[x] = 0xFF
 				}
-				chans.output <- row[x]
+				if sendToDistributor {
+					chans.output <- row[x]
+				}
 			}
 			newSlice[y] = row
 		}
 		workerSlice = newSlice
+
+		// Send rows
+		for x := 0; x < p.imageWidth; x++ {
+			chans.top.output <- workerSlice[1][x]
+			chans.bottom.output <- workerSlice[sliceHeight-2][x]
+		}
 	}
 }
 
 // distributor divides the work between workers and interacts with other goroutines.
 func distributor(p golParams, d distributorChans, alive chan []cell) {
+	ticker := time.NewTicker(2 * time.Second)
+
 	// Create the 2D slice to store the world.
 	world := make([][]byte, p.imageHeight)
 	for i := range world {
@@ -125,8 +147,7 @@ func distributor(p golParams, d distributorChans, alive chan []cell) {
 		}
 	}
 
-	// Create worker channels and initialise worker threads
-	workerChannels := make([]wChans, p.threads)
+	// Calculate worker heights
 	workerHeights := make([]int, p.threads)
 	i := 0
 	for j := 0; j < p.imageHeight; j++ {
@@ -134,56 +155,62 @@ func distributor(p golParams, d distributorChans, alive chan []cell) {
 		i++
 		i %= p.threads
 	}
+
+	// Create worker channels and start worker goroutines
+	workerChannels := make([]wChans, p.threads)
 	for i := 0; i < p.threads; i++ {
-		var wChans wChans
-		wChans.input = make(chan byte, p.imageWidth*(workerHeights[i]+2))
-		wChans.output = make(chan byte, p.imageWidth*workerHeights[i])
-		workerChannels[i] = wChans
+		workerChannels[i].input = make(chan byte, p.imageWidth*(workerHeights[i]+2))
+		workerChannels[i].output = make(chan byte, p.imageWidth*workerHeights[i])
+		workerChannels[i].outputRequest = make(chan bool, 1)
+
+		selfBottom := make(chan uint8, p.imageWidth)
+		nextTop := make(chan uint8, p.imageWidth)
+		workerChannels[i].bottom.input = nextTop
+		workerChannels[i].bottom.output = selfBottom
+		workerChannels[(i+1)%p.threads].top.input = selfBottom
+		workerChannels[(i+1)%p.threads].top.output = nextTop
+	}
+
+	for i := 0; i < p.threads; i++ {
 		go worker(p, workerChannels[i], workerHeights[i]+2)
 	}
 
 	// Calculate the new state of Game of Life after the given number of turns.
 	for turn := 0; turn < p.turns; turn++ {
 		// send rows to workers
-		for i := 0; i < p.threads; i++ {
-			// Send top row
-			y := (sumIntSlice(workerHeights[:i]) - 1 + p.imageHeight) % p.imageHeight
-			for x := 0; x < p.imageWidth; x++ {
-				workerChannels[i].input <- world[y][x]
-			}
-			// Send center rows if turn 0
-			if turn == 0 {
+		if turn == 0 {
+			for i := 0; i < p.threads; i++ {
+				// Send top and bottom row
+				y1 := (sumIntSlice(workerHeights[:i]) - 1 + p.imageHeight) % p.imageHeight
+				y2 := sumIntSlice(workerHeights[:i+1]) % p.imageHeight
+				for x := 0; x < p.imageWidth; x++ {
+					workerChannels[i].top.input <- world[y1][x]
+					workerChannels[i].bottom.input <- world[y2][x]
+				}
+				// Send center rows
 				for y := sumIntSlice(workerHeights[:i]); y < sumIntSlice(workerHeights[:i+1]); y++ {
 					for x := 0; x < p.imageWidth; x++ {
 						workerChannels[i].input <- world[y][x]
 					}
 				}
 			}
-			// Send bottom row
-			y = sumIntSlice(workerHeights[:i+1]) % p.imageHeight
-			for x := 0; x < p.imageWidth; x++ {
-				workerChannels[i].input <- world[y][x]
-			}
 		}
-
-		// Receive rows from workers
-		baseY := 0
-		for i := 0; i < p.threads; i++ {
-			for j := 0; j < workerHeights[i]; j++ {
-				world[baseY+j] = receiveRow(p.imageWidth, workerChannels[i].output)
-			}
-			baseY += workerHeights[i]
-		}
-
-		alive <- calculateFinalAlive(p, world)
 
 		// Deal with input
+		requestBoardFromWorkers := false
 		running := true
 		for {
 			select {
 			case key := <-d.key:
-				if key == 's' {
+				if key == 's' || key == 'q' {
+					requestBoardFromWorkers = true
 					sendOutput(p, d, world, turn)
+					if key == 'q' {
+						d.io.command <- ioCheckIdle
+						<-d.io.idle
+						d.exit <- true
+						alive <- calculateFinalAlive(p, world)
+					}
 				} else if key == 'p' {
 					if running {
 						fmt.Println("Pausing... turn =", turn)
@@ -191,11 +218,6 @@ func distributor(p golParams, d distributorChans, alive chan []cell) {
 						fmt.Println("Continuing")
 					}
 					running = !running
-				} else if key == 'q' {
-					sendOutput(p, d, world, turn)
-					d.io.command <- ioCheckIdle
-					<-d.io.idle
-					d.exit <- true
 				}
 			default:
 			}
@@ -203,7 +225,36 @@ func distributor(p golParams, d distributorChans, alive chan []cell) {
 				break
 			}
 		}
+
+		displayAlive := false
+		select {
+		case <-ticker.C:
+			requestBoardFromWorkers = true
+			displayAlive = true
+		default: // If tick not complete do nothing
+			requestBoardFromWorkers = requestBoardFromWorkers || turn == p.turns-1
+		}
+
+		// Tell workers whether they should send current board to distributor
+		for i := 0; i < p.threads; i++ {
+			workerChannels[i].outputRequest <- requestBoardFromWorkers
+		}
+
+		if requestBoardFromWorkers {
+			// Receive rows from workers
+			baseY := 0
+			for i := 0; i < p.threads; i++ {
+				for j := 0; j < workerHeights[i]; j++ {
+					world[baseY+j] = receiveRow(p.imageWidth, workerChannels[i].output)
+				}
+				baseY += workerHeights[i]
+			}
+			if displayAlive {
+				fmt.Println("Alive cells:", len(calculateFinalAlive(p, world)))
+			}
+		}
 	}
+	ticker.Stop()
 
 	// Send output to PGM io
 	sendOutput(p, d, world, p.turns)
@@ -212,9 +263,9 @@ func distributor(p golParams, d distributorChans, alive chan []cell) {
 	d.io.command <- ioCheckIdle
 	<-d.io.idle
 
-	// Return the coordinates of cells that are still alive.
-	alive <- calculateFinalAlive(p, world)
-
 	// Signal to gameOfLife that we're done
 	d.exit <- true
+
+	// Return the coordinates of cells that are still alive.
+	alive <- calculateFinalAlive(p, world)
 }
