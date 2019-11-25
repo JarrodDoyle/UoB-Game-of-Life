@@ -209,6 +209,7 @@ func distributor(p golParams, d distributorChans, alive chan []cell) {
 						d.io.command <- ioCheckIdle
 						<-d.io.idle
 						d.exit <- true
+						alive <- calculateFinalAlive(p, world)
 					}
 				} else if key == 'p' {
 					if running {
@@ -225,9 +226,11 @@ func distributor(p golParams, d distributorChans, alive chan []cell) {
 			}
 		}
 
+		displayAlive := false
 		select {
 		case <-ticker.C:
 			requestBoardFromWorkers = true
+			displayAlive = true
 		default: // If tick not complete do nothing
 			requestBoardFromWorkers = requestBoardFromWorkers || turn == p.turns-1
 		}
@@ -246,7 +249,9 @@ func distributor(p golParams, d distributorChans, alive chan []cell) {
 				}
 				baseY += workerHeights[i]
 			}
-			// fmt.Println("Alive cells:", len(calculateFinalAlive(p, world)))
+			if displayAlive {
+				fmt.Println("Alive cells:", len(calculateFinalAlive(p, world)))
+			}
 		}
 	}
 	ticker.Stop()
@@ -263,5 +268,4 @@ func distributor(p golParams, d distributorChans, alive chan []cell) {
 
 	// Return the coordinates of cells that are still alive.
 	alive <- calculateFinalAlive(p, world)
-
 }
