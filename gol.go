@@ -12,10 +12,11 @@ type rowChans struct {
 }
 
 type wChans struct {
-	input  chan uint8
-	output chan uint8
-	top    rowChans
-	bottom rowChans
+	input         chan uint8
+	output        chan uint8
+	top           rowChans
+	bottom        rowChans
+	outputRequest chan bool
 }
 
 func sumIntSlice(x []int) int {
@@ -78,6 +79,9 @@ func worker(p golParams, chans wChans, sliceHeight int) {
 				workerSlice[j] = receiveRow(p.imageWidth, chans.input)
 			}
 		}
+
+		sendToDistributor := <-chans.outputRequest
+
 		// Create temporary slice
 		newSlice := make([][]byte, sliceHeight)
 		for i := range newSlice {
@@ -101,7 +105,9 @@ func worker(p golParams, chans wChans, sliceHeight int) {
 				} else if aliveNeighbours == 3 {
 					row[x] = 0xFF
 				}
-				chans.output <- row[x]
+				if sendToDistributor {
+					chans.output <- row[x]
+				}
 			}
 			newSlice[y] = row
 		}
@@ -151,6 +157,7 @@ func distributor(p golParams, d distributorChans, alive chan []cell) {
 	for i := 0; i < p.threads; i++ {
 		workerChannels[i].input = make(chan byte, p.imageWidth*(workerHeights[i]+2))
 		workerChannels[i].output = make(chan byte, p.imageWidth*workerHeights[i])
+		workerChannels[i].outputRequest = make(chan bool)
 
 		selfBottom := make(chan uint8, p.imageWidth)
 		nextTop := make(chan uint8, p.imageWidth)
@@ -186,6 +193,11 @@ func distributor(p golParams, d distributorChans, alive chan []cell) {
 			}
 		}
 
+		// Tell workers to send current board to distributor
+		for i := 0; i < p.threads; i++ {
+			workerChannels[i].outputRequest <- true
+		}
+
 		// Receive rows from workers
 		baseY := 0
 		for i := 0; i < p.threads; i++ {
@@ -202,8 +214,13 @@ func distributor(p golParams, d distributorChans, alive chan []cell) {
 		for {
 			select {
 			case key := <-d.key:
-				if key == 's' {
+				if key == 's' || key == 'q' {
 					sendOutput(p, d, world, turn)
+					if key == 'q' {
+						d.io.command <- ioCheckIdle
+						<-d.io.idle
+						d.exit <- true
+					}
 				} else if key == 'p' {
 					if running {
 						fmt.Println("Pausing... turn =", turn)
@@ -211,11 +228,6 @@ func distributor(p golParams, d distributorChans, alive chan []cell) {
 						fmt.Println("Continuing")
 					}
 					running = !running
-				} else if key == 'q' {
-					sendOutput(p, d, world, turn)
-					d.io.command <- ioCheckIdle
-					<-d.io.idle
-					d.exit <- true
 				}
 			default:
 			}
