@@ -80,6 +80,7 @@ func worker(p golParams, chans wChans, sliceHeight int) {
 			}
 		}
 
+		// sendToDistributor := <-chans.outputRequest
 		sendToDistributor := <-chans.outputRequest
 
 		// Create temporary slice
@@ -157,7 +158,7 @@ func distributor(p golParams, d distributorChans, alive chan []cell) {
 	for i := 0; i < p.threads; i++ {
 		workerChannels[i].input = make(chan byte, p.imageWidth*(workerHeights[i]+2))
 		workerChannels[i].output = make(chan byte, p.imageWidth*workerHeights[i])
-		workerChannels[i].outputRequest = make(chan bool)
+		workerChannels[i].outputRequest = make(chan bool, 1)
 
 		selfBottom := make(chan uint8, p.imageWidth)
 		nextTop := make(chan uint8, p.imageWidth)
@@ -176,7 +177,6 @@ func distributor(p golParams, d distributorChans, alive chan []cell) {
 		// send rows to workers
 		if turn == 0 {
 			for i := 0; i < p.threads; i++ {
-
 				// Send top and bottom row
 				y1 := (sumIntSlice(workerHeights[:i]) - 1 + p.imageHeight) % p.imageHeight
 				y2 := sumIntSlice(workerHeights[:i+1]) % p.imageHeight
@@ -193,28 +193,14 @@ func distributor(p golParams, d distributorChans, alive chan []cell) {
 			}
 		}
 
-		// Tell workers to send current board to distributor
-		for i := 0; i < p.threads; i++ {
-			workerChannels[i].outputRequest <- true
-		}
-
-		// Receive rows from workers
-		baseY := 0
-		for i := 0; i < p.threads; i++ {
-			for j := 0; j < workerHeights[i]; j++ {
-				world[baseY+j] = receiveRow(p.imageWidth, workerChannels[i].output)
-			}
-			baseY += workerHeights[i]
-		}
-
-		alive <- calculateFinalAlive(p, world)
-
 		// Deal with input
+		requestBoardFromWorkers := false
 		running := true
 		for {
 			select {
 			case key := <-d.key:
 				if key == 's' || key == 'q' {
+					requestBoardFromWorkers = true
 					sendOutput(p, d, world, turn)
 					if key == 'q' {
 						d.io.command <- ioCheckIdle
@@ -235,6 +221,24 @@ func distributor(p golParams, d distributorChans, alive chan []cell) {
 				break
 			}
 		}
+
+		requestBoardFromWorkers = requestBoardFromWorkers || turn == p.turns-1
+		// Tell workers whether they should send current board to distributor
+		for i := 0; i < p.threads; i++ {
+			workerChannels[i].outputRequest <- requestBoardFromWorkers
+		}
+
+		if requestBoardFromWorkers {
+			// Receive rows from workers
+			baseY := 0
+			for i := 0; i < p.threads; i++ {
+				for j := 0; j < workerHeights[i]; j++ {
+					world[baseY+j] = receiveRow(p.imageWidth, workerChannels[i].output)
+				}
+				baseY += workerHeights[i]
+			}
+		}
+		alive <- calculateFinalAlive(p, world)
 	}
 
 	// Send output to PGM io

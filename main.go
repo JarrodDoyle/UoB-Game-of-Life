@@ -114,7 +114,7 @@ func gameOfLife(p golParams, keyChan <-chan rune) []cell {
 		select {
 		case alive = <-aliveCells:
 			select {
-			case _ = <-ticker.C:
+			case <-ticker.C:
 				fmt.Println("Alive cells:", len(alive))
 			default: // If tick not complete do nothing
 			}
