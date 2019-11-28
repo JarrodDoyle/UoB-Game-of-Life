@@ -76,26 +76,24 @@ func worker(p golParams, chans wChans, sliceHeight int) {
 
 		// Process center and update workerSlice
 		for y := 1; y < sliceHeight-1; y++ {
-			row := make([]byte, p.imageWidth)
 			for x := 0; x < p.imageWidth; x++ {
 				s := workerSlice
 				w := p.imageWidth
 				aliveNeighbours := (int(s[y-1][(x-1+w)%w]) + int(s[y-1][x]) + int(s[y-1][(x+1)%w]) + int(s[y][(x-1+w)%w]) +
 					int(s[y][(x+1)%w]) + int(s[y+1][(x-1+w)%w]) + int(s[y+1][x]) + int(s[y+1][(x+1)%w])) / 255
 
-				row[x] = workerSlice[y][x]
+				newSlice[y][x] = workerSlice[y][x]
 				if workerSlice[y][x] != 0 {
 					if !(aliveNeighbours == 2 || aliveNeighbours == 3) {
-						row[x] = 0x00
+						newSlice[y][x] = 0x00
 					}
 				} else if aliveNeighbours == 3 {
-					row[x] = 0xFF
+					newSlice[y][x] = 0xFF
 				}
 			}
 			if sendToDistributor {
-				chans.output <- row
+				chans.output <- newSlice[y]
 			}
-			newSlice[y] = row
 		}
 		workerSlice = newSlice
 
