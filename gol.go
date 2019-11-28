@@ -103,6 +103,21 @@ func worker(p golParams, chans wChans, sliceHeight int) {
 	}
 }
 
+func exitDistributor(p golParams, d distributorChans, world [][]byte, alive chan []cell, ticker *time.Ticker) {
+	// Stop the ticker
+	ticker.Stop()
+
+	// Make sure that the Io has finished any output before exiting.
+	d.io.command <- ioCheckIdle
+	<-d.io.idle
+
+	// Signal to gameOfLife that we're done
+	d.exit <- true
+
+	// Return the coordinates of cells that are still alive.
+	alive <- calculateFinalAlive(p, world)
+}
+
 // distributor divides the work between workers and interacts with other goroutines.
 func distributor(p golParams, d distributorChans, alive chan []cell) {
 	ticker := time.NewTicker(2 * time.Second)
@@ -187,10 +202,7 @@ func distributor(p golParams, d distributorChans, alive chan []cell) {
 					requestBoardFromWorkers = true
 					sendOutput(p, d, world, turn)
 					if key == 'q' {
-						d.io.command <- ioCheckIdle
-						<-d.io.idle
-						d.exit <- true
-						alive <- calculateFinalAlive(p, world)
+						exitDistributor(p, d, world, alive, ticker)
 					}
 				} else if key == 'p' {
 					if running {
@@ -212,7 +224,7 @@ func distributor(p golParams, d distributorChans, alive chan []cell) {
 		case <-ticker.C:
 			requestBoardFromWorkers = true
 			displayAlive = true
-		default: // If tick not complete do nothing
+		default:
 			requestBoardFromWorkers = requestBoardFromWorkers || turn == p.turns-1
 		}
 
@@ -235,18 +247,6 @@ func distributor(p golParams, d distributorChans, alive chan []cell) {
 			}
 		}
 	}
-	ticker.Stop()
-
-	// Send output to PGM io
 	sendOutput(p, d, world, p.turns)
-
-	// Make sure that the Io has finished any output before exiting.
-	d.io.command <- ioCheckIdle
-	<-d.io.idle
-
-	// Signal to gameOfLife that we're done
-	d.exit <- true
-
-	// Return the coordinates of cells that are still alive.
-	alive <- calculateFinalAlive(p, world)
+	exitDistributor(p, d, world, alive, ticker)
 }
