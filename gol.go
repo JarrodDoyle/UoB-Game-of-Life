@@ -48,6 +48,7 @@ func calculateFinalAlive(p golParams, world [][]byte) []cell {
 }
 
 func worker(p golParams, chans wChans, sliceHeight int) {
+	// Create a slice for holding an up-to-date version of the cells being acted on by the worker
 	workerSlice := make([][]byte, sliceHeight)
 	for i := range workerSlice {
 		workerSlice[i] = make([]byte, p.imageWidth)
@@ -79,10 +80,14 @@ func worker(p golParams, chans wChans, sliceHeight int) {
 			for x := 0; x < p.imageWidth; x++ {
 				s := workerSlice
 				w := p.imageWidth
+				// Neighbourhood calculation: x-1...x+1, y-1...y+1 excluding x, y
 				aliveNeighbours := (int(s[y-1][(x-1+w)%w]) + int(s[y-1][x]) + int(s[y-1][(x+1)%w]) + int(s[y][(x-1+w)%w]) +
 					int(s[y][(x+1)%w]) + int(s[y+1][(x-1+w)%w]) + int(s[y+1][x]) + int(s[y+1][(x+1)%w])) / 255
 
 				newSlice[y][x] = workerSlice[y][x]
+
+				// If cell is currently alive and doesn't have 2 or 3 neighbours, kill it.
+				// If cell is dead and has 3 neighbours life begins.
 				if workerSlice[y][x] != 0 {
 					if !(aliveNeighbours == 2 || aliveNeighbours == 3) {
 						newSlice[y][x] = 0x00
@@ -95,6 +100,7 @@ func worker(p golParams, chans wChans, sliceHeight int) {
 				chans.output <- newSlice[y]
 			}
 		}
+		// Update the workerSlice with the newly processed center section
 		workerSlice = newSlice
 
 		// Send rows
@@ -120,6 +126,7 @@ func exitDistributor(p golParams, d distributorChans, world [][]byte, alive chan
 
 // distributor divides the work between workers and interacts with other goroutines.
 func distributor(p golParams, d distributorChans, alive chan []cell) {
+	// Creates a new ticker used for keeping track of when to output the number of alive cells
 	ticker := time.NewTicker(2 * time.Second)
 
 	// Create the 2D slice to store the world.
@@ -214,6 +221,7 @@ func distributor(p golParams, d distributorChans, alive chan []cell) {
 				}
 			default:
 			}
+			// Conditional break makes the `for` act like a `do while`
 			if running {
 				break
 			}
