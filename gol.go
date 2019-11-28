@@ -20,14 +20,6 @@ type wChans struct {
 	outputRequest chan bool
 }
 
-func sumIntSlice(x []int) int {
-	total := 0
-	for _, i := range x {
-		total += i
-	}
-	return total
-}
-
 func sendOutput(p golParams, d distributorChans, world [][]byte, turn int) {
 	// Request the io goroutine to write in the image with the given filename.
 	d.io.command <- ioOutput
@@ -149,12 +141,12 @@ func distributor(p golParams, d distributorChans, alive chan []cell) {
 	// Create worker channels and start worker goroutines
 	workerChannels := make([]wChans, p.threads)
 	for i := 0; i < p.threads; i++ {
-		workerChannels[i].input = make(chan []byte, p.imageWidth*(workerHeights[i]+2))
-		workerChannels[i].output = make(chan []byte, p.imageWidth*workerHeights[i])
+		workerChannels[i].input = make(chan []byte, workerHeights[i]+2)
+		workerChannels[i].output = make(chan []byte, workerHeights[i])
 		workerChannels[i].outputRequest = make(chan bool, 1)
 
-		selfBottom := make(chan []uint8, p.imageWidth)
-		nextTop := make(chan []uint8, p.imageWidth)
+		selfBottom := make(chan []uint8, 1)
+		nextTop := make(chan []uint8, 1)
 		workerChannels[i].bottom.input = nextTop
 		workerChannels[i].bottom.output = selfBottom
 		workerChannels[(i+1)%p.threads].top.input = selfBottom
@@ -169,17 +161,21 @@ func distributor(p golParams, d distributorChans, alive chan []cell) {
 	for turn := 0; turn < p.turns; turn++ {
 		// send rows to workers
 		if turn == 0 {
+			baseY := 0
 			for i := 0; i < p.threads; i++ {
-				// Send top and bottom row
-				y1 := (sumIntSlice(workerHeights[:i]) - 1 + p.imageHeight) % p.imageHeight
-				y2 := sumIntSlice(workerHeights[:i+1]) % p.imageHeight
+				// Work out y values of top and bottom rows to be sent
+				yTop := (baseY - 1 + p.imageHeight) % p.imageHeight
+				yBottom := (baseY + workerHeights[i]) % p.imageHeight
 
-				workerChannels[i].top.input <- world[y1]
-				workerChannels[i].bottom.input <- world[y2]
+				// Send top and bottom rows to workers
+				workerChannels[i].top.input <- world[yTop]
+				workerChannels[i].bottom.input <- world[yBottom]
+
 				// Send center rows
-				for y := sumIntSlice(workerHeights[:i]); y < sumIntSlice(workerHeights[:i+1]); y++ {
+				for y := baseY; y < baseY+workerHeights[i]; y++ {
 					workerChannels[i].input <- world[y]
 				}
+				baseY += workerHeights[i]
 			}
 		}
 
