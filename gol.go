@@ -66,7 +66,7 @@ func worker(p golParams, chans wChans, sliceHeight int) {
 			}
 		}
 
-		// sendToDistributor := <-chans.outputRequest
+		// Does the distributor want the workers to output the board?
 		sendToDistributor := <-chans.outputRequest
 
 		// Create temporary slice
@@ -109,16 +109,13 @@ func worker(p golParams, chans wChans, sliceHeight int) {
 	}
 }
 
-func exitDistributor(p golParams, d distributorChans, world [][]byte, alive chan []cell, ticker *time.Ticker) {
-	// Stop the ticker
+func exitDistributor(p golParams, d distributorChans, world [][]byte, alive chan []cell, ticker *time.Ticker, turn int) {
+	sendOutput(p, d, world, turn)
 	ticker.Stop()
 
 	// Make sure that the Io has finished any output before exiting.
 	d.io.command <- ioCheckIdle
 	<-d.io.idle
-
-	// Signal to gameOfLife that we're done
-	d.exit <- true
 
 	// Return the coordinates of cells that are still alive.
 	alive <- calculateFinalAlive(p, world)
@@ -205,12 +202,12 @@ func distributor(p golParams, d distributorChans, alive chan []cell) {
 		for {
 			select {
 			case key := <-d.key:
-				if key == 's' || key == 'q' {
+				if key == 's' {
 					requestBoardFromWorkers = true
 					sendOutput(p, d, world, turn)
-					if key == 'q' {
-						exitDistributor(p, d, world, alive, ticker)
-					}
+				} else if key == 'q' {
+					requestBoardFromWorkers = true
+					exitDistributor(p, d, world, alive, ticker, turn)
 				} else if key == 'p' {
 					if running {
 						fmt.Println("Pausing... turn =", turn)
@@ -255,6 +252,5 @@ func distributor(p golParams, d distributorChans, alive chan []cell) {
 			}
 		}
 	}
-	sendOutput(p, d, world, p.turns)
-	exitDistributor(p, d, world, alive, ticker)
+	exitDistributor(p, d, world, alive, ticker, p.turns)
 }
