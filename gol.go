@@ -231,6 +231,7 @@ func distributor(p golParams, d distributorChans, alive chan []cell) {
 			default:
 			}
 			// Conditional break makes the `for` act like a `do while`
+			// This allows for nicely pausing processing while still allowing outputting and quitting
 			if running {
 				break
 			}
