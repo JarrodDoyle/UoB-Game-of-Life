@@ -196,8 +196,16 @@ func distributor(p golParams, d distributorChans, alive chan []cell) {
 			}
 		}
 
+		displayAlive := false
+		requestBoardFromWorkers := turn == p.turns-1
+		select {
+		case <-ticker.C:
+			requestBoardFromWorkers = true
+			displayAlive = true
+		default:
+		}
+
 		// Deal with input
-		requestBoardFromWorkers := false
 		running := true
 		for {
 			select {
@@ -226,15 +234,6 @@ func distributor(p golParams, d distributorChans, alive chan []cell) {
 			if running {
 				break
 			}
-		}
-
-		displayAlive := false
-		select {
-		case <-ticker.C:
-			requestBoardFromWorkers = true
-			displayAlive = true
-		default: // May still want to request the board even if there is no tick update
-			requestBoardFromWorkers = requestBoardFromWorkers || turn == p.turns-1
 		}
 
 		// Tell workers whether they should send current board to distributor
