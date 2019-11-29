@@ -121,6 +121,23 @@ func exitDistributor(p golParams, d distributorChans, world [][]byte, alive chan
 	alive <- calculateFinalAlive(p, world)
 }
 
+func createWorkerChannels(wCount int, wHeights []int) []wChans {
+	chans := make([]wChans, wCount)
+	for i := 0; i < wCount; i++ {
+		chans[i].input = make(chan []byte, wHeights[i]+2)
+		chans[i].output = make(chan []byte, wHeights[i])
+		chans[i].outputRequest = make(chan bool, 1)
+
+		selfBottom := make(chan []uint8, 1)
+		nextTop := make(chan []uint8, 1)
+		chans[i].bottom.input = nextTop
+		chans[i].bottom.output = selfBottom
+		chans[(i+1)%wCount].top.input = selfBottom
+		chans[(i+1)%wCount].top.output = nextTop
+	}
+	return chans
+}
+
 // distributor divides the work between workers and interacts with other goroutines.
 func distributor(p golParams, d distributorChans, alive chan []cell) {
 	// Creates a new ticker used for keeping track of when to output the number of alive cells
@@ -154,22 +171,8 @@ func distributor(p golParams, d distributorChans, alive chan []cell) {
 		i = (i + 1) % p.threads
 	}
 
-	// Create worker channels
-	workerChannels := make([]wChans, p.threads)
-	for i := 0; i < p.threads; i++ {
-		workerChannels[i].input = make(chan []byte, workerHeights[i]+2)
-		workerChannels[i].output = make(chan []byte, workerHeights[i])
-		workerChannels[i].outputRequest = make(chan bool, 1)
-
-		selfBottom := make(chan []uint8, 1)
-		nextTop := make(chan []uint8, 1)
-		workerChannels[i].bottom.input = nextTop
-		workerChannels[i].bottom.output = selfBottom
-		workerChannels[(i+1)%p.threads].top.input = selfBottom
-		workerChannels[(i+1)%p.threads].top.output = nextTop
-	}
-
-	// Start all of the worker goroutines
+	// Create worker channels and start worker goroutines
+	workerChannels := createWorkerChannels(p.threads, workerHeights)
 	for i := 0; i < p.threads; i++ {
 		go worker(p, workerChannels[i], workerHeights[i]+2)
 	}
