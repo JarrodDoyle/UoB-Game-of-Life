@@ -151,11 +151,10 @@ func distributor(p golParams, d distributorChans, alive chan []cell) {
 	i := 0
 	for j := 0; j < p.imageHeight; j++ {
 		workerHeights[i]++
-		i++
-		i %= p.threads
+		i = (i + 1) % p.threads
 	}
 
-	// Create worker channels and start worker goroutines
+	// Create worker channels
 	workerChannels := make([]wChans, p.threads)
 	for i := 0; i < p.threads; i++ {
 		workerChannels[i].input = make(chan []byte, workerHeights[i]+2)
@@ -170,6 +169,7 @@ func distributor(p golParams, d distributorChans, alive chan []cell) {
 		workerChannels[(i+1)%p.threads].top.output = nextTop
 	}
 
+	// Start all of the worker goroutines
 	for i := 0; i < p.threads; i++ {
 		go worker(p, workerChannels[i], workerHeights[i]+2)
 	}
@@ -203,15 +203,19 @@ func distributor(p golParams, d distributorChans, alive chan []cell) {
 			select {
 			case key := <-d.key:
 				if key == 's' {
+					// If 's' is pressed, generate a PGM file with the current state of the board.
 					requestBoardFromWorkers = true
 					sendOutput(p, d, world, turn)
 				} else if key == 'q' {
+					// If 'q' is pressed, generate a PGM file with the current state of the board and then terminate the program.
 					requestBoardFromWorkers = true
 					exitDistributor(p, d, world, alive, ticker, turn)
 				} else if key == 'p' {
 					if running {
+						// If p is pressed, pause the processing and print the current turn that is being processed.
 						fmt.Println("Pausing... turn =", turn)
 					} else {
+						// If p is pressed again resume the processing and print "Continuing"
 						fmt.Println("Continuing")
 					}
 					running = !running
@@ -229,7 +233,7 @@ func distributor(p golParams, d distributorChans, alive chan []cell) {
 		case <-ticker.C:
 			requestBoardFromWorkers = true
 			displayAlive = true
-		default:
+		default: // May still want to request the board even if there is no tick update
 			requestBoardFromWorkers = requestBoardFromWorkers || turn == p.turns-1
 		}
 
