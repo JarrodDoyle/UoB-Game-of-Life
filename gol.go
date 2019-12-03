@@ -8,16 +8,24 @@ import (
 )
 
 type rowChans struct {
-	input  chan []uint8
-	output chan []uint8
+	input  chan uint8
+	output chan uint8
 }
 
 type wChans struct {
-	input         chan []uint8
-	output        chan []uint8
+	input         chan uint8
+	output        chan uint8
 	top           rowChans
 	bottom        rowChans
 	outputRequest chan bool
+}
+
+func receiveRow(width int, val <-chan byte) []byte {
+	row := make([]byte, width)
+	for x := 0; x < width; x++ {
+		row[x] = <-val
+	}
+	return row
 }
 
 func sendOutput(p golParams, d distributorChans, world [][]byte, turn int) {
@@ -56,13 +64,13 @@ func worker(p golParams, chans wChans, sliceHeight int) {
 
 	for i := 0; i < p.turns; i++ {
 		// Receive top and bottom row
-		workerSlice[0] = <-chans.top.input
-		workerSlice[sliceHeight-1] = <-chans.bottom.input
+		workerSlice[0] = receiveRow(p.imageWidth, chans.top.input)
+		workerSlice[sliceHeight-1] = receiveRow(p.imageWidth, chans.bottom.input)
 
 		// Receive center section if first turn
 		if i == 0 {
 			for j := 1; j < sliceHeight-1; j++ {
-				workerSlice[j] = <-chans.input
+				workerSlice[j] = receiveRow(p.imageWidth, chans.input)
 			}
 		}
 
@@ -95,17 +103,19 @@ func worker(p golParams, chans wChans, sliceHeight int) {
 				} else if aliveNeighbours == 3 {
 					newSlice[y][x] = 0xFF
 				}
-			}
-			if sendToDistributor {
-				chans.output <- newSlice[y]
+				if sendToDistributor {
+					chans.output <- newSlice[y][x]
+				}
 			}
 		}
 		// Update the workerSlice with the newly processed center section
 		workerSlice = newSlice
 
 		// Send rows
-		chans.top.output <- workerSlice[1]
-		chans.bottom.output <- workerSlice[sliceHeight-2]
+		for x := 0; x < p.imageWidth; x++ {
+			chans.top.output <- workerSlice[1][x]
+			chans.bottom.output <- workerSlice[sliceHeight-2][x]
+		}
 	}
 }
 
@@ -121,15 +131,15 @@ func exitDistributor(p golParams, d distributorChans, world [][]byte, alive chan
 	alive <- calculateFinalAlive(p, world)
 }
 
-func createWorkerChannels(wCount int, wHeights []int) []wChans {
+func createWorkerChannels(imageWidth, wCount int, wHeights []int) []wChans {
 	chans := make([]wChans, wCount)
 	for i := 0; i < wCount; i++ {
-		chans[i].input = make(chan []byte, wHeights[i]+2)
-		chans[i].output = make(chan []byte, wHeights[i])
+		chans[i].input = make(chan byte, wHeights[i]+2)
+		chans[i].output = make(chan byte, wHeights[i])
 		chans[i].outputRequest = make(chan bool, 1)
 
-		selfBottom := make(chan []uint8, 1)
-		nextTop := make(chan []uint8, 1)
+		selfBottom := make(chan uint8, imageWidth)
+		nextTop := make(chan uint8, imageWidth)
 		chans[i].bottom.input = nextTop
 		chans[i].bottom.output = selfBottom
 		chans[(i+1)%wCount].top.input = selfBottom
@@ -172,7 +182,7 @@ func distributor(p golParams, d distributorChans, alive chan []cell) {
 	}
 
 	// Create worker channels and start worker goroutines
-	workerChannels := createWorkerChannels(p.threads, workerHeights)
+	workerChannels := createWorkerChannels(p.imageWidth, p.threads, workerHeights)
 	for i := 0; i < p.threads; i++ {
 		go worker(p, workerChannels[i], workerHeights[i]+2)
 	}
@@ -186,14 +196,15 @@ func distributor(p golParams, d distributorChans, alive chan []cell) {
 				// Work out y values of top and bottom rows to be sent
 				yTop := (baseY - 1 + p.imageHeight) % p.imageHeight
 				yBottom := (baseY + workerHeights[i]) % p.imageHeight
-
-				// Send top and bottom rows to workers
-				workerChannels[i].top.input <- world[yTop]
-				workerChannels[i].bottom.input <- world[yBottom]
-
+				for x := 0; x < p.imageWidth; x++ {
+					workerChannels[i].top.input <- world[yTop][x]
+					workerChannels[i].bottom.input <- world[yBottom][x]
+				}
 				// Send center rows
 				for y := baseY; y < baseY+workerHeights[i]; y++ {
-					workerChannels[i].input <- world[y]
+					for x := 0; x < p.imageWidth; x++ {
+						workerChannels[i].input <- world[y][x]
+					}
 				}
 				baseY += workerHeights[i]
 			}
@@ -250,7 +261,7 @@ func distributor(p golParams, d distributorChans, alive chan []cell) {
 			baseY := 0
 			for i := 0; i < p.threads; i++ {
 				for j := 0; j < workerHeights[i]; j++ {
-					world[baseY+j] = <-workerChannels[i].output
+					world[baseY+j] = receiveRow(p.imageWidth, workerChannels[i].output)
 				}
 				baseY += workerHeights[i]
 			}
