@@ -8,32 +8,16 @@ import (
 )
 
 type rowChans struct {
-	input  chan uint8
-	output chan uint8
+	input  chan []uint8
+	output chan []uint8
 }
 
 type wChans struct {
-	input         chan uint8
-	output        chan uint8
+	input         chan []uint8
+	output        chan []uint8
 	top           rowChans
 	bottom        rowChans
 	outputRequest chan bool
-}
-
-func sumIntSlice(x []int) int {
-	total := 0
-	for _, i := range x {
-		total += i
-	}
-	return total
-}
-
-func receiveRow(width int, val <-chan byte) []byte {
-	row := make([]byte, width)
-	for x := 0; x < width; x++ {
-		row[x] = <-val
-	}
-	return row
 }
 
 func sendOutput(p golParams, d distributorChans, world [][]byte, turn int) {
@@ -64,6 +48,7 @@ func calculateFinalAlive(p golParams, world [][]byte) []cell {
 }
 
 func worker(p golParams, chans wChans, sliceHeight int) {
+	// Create a slice for holding an up-to-date version of the cells being acted on by the worker
 	workerSlice := make([][]byte, sliceHeight)
 	for i := range workerSlice {
 		workerSlice[i] = make([]byte, p.imageWidth)
@@ -71,17 +56,17 @@ func worker(p golParams, chans wChans, sliceHeight int) {
 
 	for i := 0; i < p.turns; i++ {
 		// Receive top and bottom row
-		workerSlice[0] = receiveRow(p.imageWidth, chans.top.input)
-		workerSlice[sliceHeight-1] = receiveRow(p.imageWidth, chans.bottom.input)
+		workerSlice[0] = <-chans.top.input
+		workerSlice[sliceHeight-1] = <-chans.bottom.input
 
 		// Receive center section if first turn
 		if i == 0 {
 			for j := 1; j < sliceHeight-1; j++ {
-				workerSlice[j] = receiveRow(p.imageWidth, chans.input)
+				workerSlice[j] = <-chans.input
 			}
 		}
 
-		// sendToDistributor := <-chans.outputRequest
+		// Does the distributor want the workers to output the board?
 		sendToDistributor := <-chans.outputRequest
 
 		// Create temporary slice
@@ -92,39 +77,70 @@ func worker(p golParams, chans wChans, sliceHeight int) {
 
 		// Process center and update workerSlice
 		for y := 1; y < sliceHeight-1; y++ {
-			row := make([]byte, p.imageWidth)
 			for x := 0; x < p.imageWidth; x++ {
 				s := workerSlice
 				w := p.imageWidth
+				// Neighbourhood calculation: x-1...x+1, y-1...y+1 excluding x, y
 				aliveNeighbours := (int(s[y-1][(x-1+w)%w]) + int(s[y-1][x]) + int(s[y-1][(x+1)%w]) + int(s[y][(x-1+w)%w]) +
 					int(s[y][(x+1)%w]) + int(s[y+1][(x-1+w)%w]) + int(s[y+1][x]) + int(s[y+1][(x+1)%w])) / 255
 
-				row[x] = workerSlice[y][x]
+				newSlice[y][x] = workerSlice[y][x]
+
+				// If cell is currently alive and doesn't have 2 or 3 neighbours, kill it.
+				// If cell is dead and has 3 neighbours life begins.
 				if workerSlice[y][x] != 0 {
 					if !(aliveNeighbours == 2 || aliveNeighbours == 3) {
-						row[x] = 0x00
+						newSlice[y][x] = 0x00
 					}
 				} else if aliveNeighbours == 3 {
-					row[x] = 0xFF
-				}
-				if sendToDistributor {
-					chans.output <- row[x]
+					newSlice[y][x] = 0xFF
 				}
 			}
-			newSlice[y] = row
+			if sendToDistributor {
+				chans.output <- newSlice[y]
+			}
 		}
+		// Update the workerSlice with the newly processed center section
 		workerSlice = newSlice
 
 		// Send rows
-		for x := 0; x < p.imageWidth; x++ {
-			chans.top.output <- workerSlice[1][x]
-			chans.bottom.output <- workerSlice[sliceHeight-2][x]
-		}
+		chans.top.output <- workerSlice[1]
+		chans.bottom.output <- workerSlice[sliceHeight-2]
 	}
+}
+
+func exitDistributor(p golParams, d distributorChans, world [][]byte, alive chan []cell, ticker *time.Ticker, turn int) {
+	sendOutput(p, d, world, turn)
+	ticker.Stop()
+
+	// Make sure that the Io has finished any output before exiting.
+	d.io.command <- ioCheckIdle
+	<-d.io.idle
+
+	// Return the coordinates of cells that are still alive.
+	alive <- calculateFinalAlive(p, world)
+}
+
+func createWorkerChannels(wCount int, wHeights []int) []wChans {
+	chans := make([]wChans, wCount)
+	for i := 0; i < wCount; i++ {
+		chans[i].input = make(chan []byte, wHeights[i]+2)
+		chans[i].output = make(chan []byte, wHeights[i])
+		chans[i].outputRequest = make(chan bool, 1)
+
+		selfBottom := make(chan []uint8, 1)
+		nextTop := make(chan []uint8, 1)
+		chans[i].bottom.input = nextTop
+		chans[i].bottom.output = selfBottom
+		chans[(i+1)%wCount].top.input = selfBottom
+		chans[(i+1)%wCount].top.output = nextTop
+	}
+	return chans
 }
 
 // distributor divides the work between workers and interacts with other goroutines.
 func distributor(p golParams, d distributorChans, alive chan []cell) {
+	// Creates a new ticker used for keeping track of when to output the number of alive cells
 	ticker := time.NewTicker(2 * time.Second)
 
 	// Create the 2D slice to store the world.
@@ -152,25 +168,11 @@ func distributor(p golParams, d distributorChans, alive chan []cell) {
 	i := 0
 	for j := 0; j < p.imageHeight; j++ {
 		workerHeights[i]++
-		i++
-		i %= p.threads
+		i = (i + 1) % p.threads
 	}
 
 	// Create worker channels and start worker goroutines
-	workerChannels := make([]wChans, p.threads)
-	for i := 0; i < p.threads; i++ {
-		workerChannels[i].input = make(chan byte, p.imageWidth*(workerHeights[i]+2))
-		workerChannels[i].output = make(chan byte, p.imageWidth*workerHeights[i])
-		workerChannels[i].outputRequest = make(chan bool, 1)
-
-		selfBottom := make(chan uint8, p.imageWidth)
-		nextTop := make(chan uint8, p.imageWidth)
-		workerChannels[i].bottom.input = nextTop
-		workerChannels[i].bottom.output = selfBottom
-		workerChannels[(i+1)%p.threads].top.input = selfBottom
-		workerChannels[(i+1)%p.threads].top.output = nextTop
-	}
-
+	workerChannels := createWorkerChannels(p.threads, workerHeights)
 	for i := 0; i < p.threads; i++ {
 		go worker(p, workerChannels[i], workerHeights[i]+2)
 	}
@@ -179,60 +181,63 @@ func distributor(p golParams, d distributorChans, alive chan []cell) {
 	for turn := 0; turn < p.turns; turn++ {
 		// send rows to workers
 		if turn == 0 {
+			baseY := 0
 			for i := 0; i < p.threads; i++ {
-				// Send top and bottom row
-				y1 := (sumIntSlice(workerHeights[:i]) - 1 + p.imageHeight) % p.imageHeight
-				y2 := sumIntSlice(workerHeights[:i+1]) % p.imageHeight
-				for x := 0; x < p.imageWidth; x++ {
-					workerChannels[i].top.input <- world[y1][x]
-					workerChannels[i].bottom.input <- world[y2][x]
-				}
+				// Work out y values of top and bottom rows to be sent
+				yTop := (baseY - 1 + p.imageHeight) % p.imageHeight
+				yBottom := (baseY + workerHeights[i]) % p.imageHeight
+
+				// Send top and bottom rows to workers
+				workerChannels[i].top.input <- world[yTop]
+				workerChannels[i].bottom.input <- world[yBottom]
+
 				// Send center rows
-				for y := sumIntSlice(workerHeights[:i]); y < sumIntSlice(workerHeights[:i+1]); y++ {
-					for x := 0; x < p.imageWidth; x++ {
-						workerChannels[i].input <- world[y][x]
-					}
+				for y := baseY; y < baseY+workerHeights[i]; y++ {
+					workerChannels[i].input <- world[y]
 				}
+				baseY += workerHeights[i]
 			}
 		}
 
+		displayAlive := false
+		requestBoardFromWorkers := turn == p.turns-1
+		select {
+		case <-ticker.C:
+			requestBoardFromWorkers = true
+			displayAlive = true
+		default:
+		}
+
 		// Deal with input
-		requestBoardFromWorkers := false
 		running := true
 		for {
 			select {
 			case key := <-d.key:
-				if key == 's' || key == 'q' {
+				if key == 's' {
+					// If 's' is pressed, generate a PGM file with the current state of the board.
 					requestBoardFromWorkers = true
 					sendOutput(p, d, world, turn)
-					if key == 'q' {
-						d.io.command <- ioCheckIdle
-						<-d.io.idle
-						d.exit <- true
-						alive <- calculateFinalAlive(p, world)
-					}
+				} else if key == 'q' {
+					// If 'q' is pressed, generate a PGM file with the current state of the board and then terminate the program.
+					requestBoardFromWorkers = true
+					exitDistributor(p, d, world, alive, ticker, turn)
 				} else if key == 'p' {
 					if running {
+						// If p is pressed, pause the processing and print the current turn that is being processed.
 						fmt.Println("Pausing... turn =", turn)
 					} else {
+						// If p is pressed again resume the processing and print "Continuing"
 						fmt.Println("Continuing")
 					}
 					running = !running
 				}
 			default:
 			}
+			// Conditional break makes the `for` act like a `do while`
+			// This allows for nicely pausing processing while still allowing outputting and quitting
 			if running {
 				break
 			}
-		}
-
-		displayAlive := false
-		select {
-		case <-ticker.C:
-			requestBoardFromWorkers = true
-			displayAlive = true
-		default: // If tick not complete do nothing
-			requestBoardFromWorkers = requestBoardFromWorkers || turn == p.turns-1
 		}
 
 		// Tell workers whether they should send current board to distributor
@@ -245,7 +250,7 @@ func distributor(p golParams, d distributorChans, alive chan []cell) {
 			baseY := 0
 			for i := 0; i < p.threads; i++ {
 				for j := 0; j < workerHeights[i]; j++ {
-					world[baseY+j] = receiveRow(p.imageWidth, workerChannels[i].output)
+					world[baseY+j] = <-workerChannels[i].output
 				}
 				baseY += workerHeights[i]
 			}
@@ -254,18 +259,5 @@ func distributor(p golParams, d distributorChans, alive chan []cell) {
 			}
 		}
 	}
-	ticker.Stop()
-
-	// Send output to PGM io
-	sendOutput(p, d, world, p.turns)
-
-	// Make sure that the Io has finished any output before exiting.
-	d.io.command <- ioCheckIdle
-	<-d.io.idle
-
-	// Signal to gameOfLife that we're done
-	d.exit <- true
-
-	// Return the coordinates of cells that are still alive.
-	alive <- calculateFinalAlive(p, world)
+	exitDistributor(p, d, world, alive, ticker, p.turns)
 }

@@ -55,9 +55,8 @@ type ioToDistributor struct {
 
 // distributorChans stores all the chans that the distributor goroutine will use.
 type distributorChans struct {
-	io   distributorToIo
-	key  <-chan rune
-	exit chan<- bool
+	io  distributorToIo
+	key <-chan rune
 }
 
 // ioChans stores all the chans that the io goroutine will use.
@@ -95,15 +94,11 @@ func gameOfLife(p golParams, keyChan <-chan rune) []cell {
 
 	dChans.key = keyChan
 
-	exitChan := make(chan bool)
-	dChans.exit = exitChan
-
 	aliveCells := make(chan []cell)
 
 	go distributor(p, dChans, aliveCells)
 	go pgmIo(p, ioChans)
 
-	<-exitChan
 	return <-aliveCells
 }
 
